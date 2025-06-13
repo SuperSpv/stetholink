@@ -1,6 +1,6 @@
-Flask
+fastapi
+uvicorn
 numpy
 scipy
 pydub
 requests
-matplotlib
