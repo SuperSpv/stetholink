@@ -9,6 +9,7 @@ from pydub import AudioSegment
 import base64
 import io
 import os
+import audioop 
 
 app = FastAPI()
 
