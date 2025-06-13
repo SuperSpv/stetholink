@@ -1,5 +1,6 @@
-flask
-pydub
-scipy
+Flask
 numpy
+scipy
+pydub
 requests
+matplotlib
