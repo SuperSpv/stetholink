@@ -38,7 +38,6 @@ def analyze_audio(url: str = Query(..., description="URL to audio file (mp3, wav
         sound = AudioSegment.from_file(f"{filename}.{ext}")
         sound = sound.set_channels(1)
         sound.export(wav_path, format="wav")
-        os.remove(f"{filename}.{ext}")
     else:
         os.rename(f"{filename}.{ext}", wav_path)
 
@@ -53,7 +52,7 @@ def analyze_audio(url: str = Query(..., description="URL to audio file (mp3, wav
     b, a = butter_bandpass(20, 200, sample_rate)
     filtered = filtfilt(b, a, data)
 
-    # Peaks (detecting S1)
+    # Peaks
     peaks, _ = find_peaks(filtered, distance=sample_rate * 0.2, height=np.max(filtered) * 0.2)
     s1_peaks = []
     last_beat_time = -np.inf
@@ -62,10 +61,10 @@ def analyze_audio(url: str = Query(..., description="URL to audio file (mp3, wav
             s1_peaks.append(idx)
             last_beat_time = pt
 
-    # Heart Rate Calculation
+    # Heart Rate
     heart_rate = len(s1_peaks) / duration_sec * 60
 
-    # Generate PCG plot
+    # PCG Plot (Base64 PNG)
     time_axis = np.arange(len(filtered)) / sample_rate
     fig, ax = plt.subplots(figsize=(10, 3))
     ax.plot(time_axis, filtered, label="Filtered PCG", color="#02066f")
