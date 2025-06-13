@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify
 import os
+import io
+import base64
 import numpy as np
+import matplotlib.pyplot as plt
 import requests
 from scipy.io import wavfile
 from scipy.signal import butter, filtfilt, find_peaks
@@ -35,8 +38,8 @@ def process_audio():
     if ext != "wav":
         sound = AudioSegment.from_file(f"{filename}.{ext}")
         sound = sound.set_channels(1)  # mono
-        sound.export(f"{filename}.wav", format="wav")
         wav_path = f"{filename}.wav"
+        sound.export(wav_path, format="wav")
     else:
         wav_path = f"{filename}.wav"
 
@@ -69,6 +72,27 @@ def process_audio():
     # Heart rate
     heart_rate = len(s1_peaks) / duration_sec * 60
 
+    # Plot waveform + S1 peaks
+    time_axis = np.arange(len(filtered)) / sample_rate
+    plt.figure(figsize=(10, 4))
+    plt.plot(time_axis, filtered, color='#02066f', label='Filtered PCG')
+    plt.plot(np.array(s1_peaks) / sample_rate, filtered[s1_peaks], 'o', color='#ff0000', label='Detected S1')
+    plt.title('Phonocardiogram with S1 Peaks')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    # Save plot to PNG image in memory
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf, format='png')
+    plt.close()
+    img_buf.seek(0)
+
+    # Encode image as base64 string
+    img_base64 = base64.b64encode(img_buf.read()).decode('utf-8')
+
     # Clean up files
     try:
         os.remove(f"{filename}.{ext}")
@@ -80,6 +104,7 @@ def process_audio():
         "heart_rate": round(heart_rate, 2),
         "duration_seconds": round(duration_sec, 2),
         "s1_peaks_count": len(s1_peaks),
+        "pcg_plot_png_base64": img_base64,
         "message": "Processing successful"
     })
 
