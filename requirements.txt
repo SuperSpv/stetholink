@@ -5,3 +5,4 @@ scipy
 pydub
 matplotlib
 requests
+audioop
