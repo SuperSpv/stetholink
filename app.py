@@ -22,7 +22,11 @@ def classify():
         return jsonify({"error": "Missing 'audio_url'"}), 400
 
     try:
-        audio_data = requests.get(audio_url).content
+        audio_response = requests.get(audio_url)
+        print("Audio response status:", audio_response.status_code)
+        audio_data = audio_response.content
+        print("Audio data length:", len(audio_data))
+
         response = requests.post(
             EDGE_API,
             headers={
