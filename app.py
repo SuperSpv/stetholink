@@ -10,23 +10,19 @@ API_KEY = "ei_95b7e4358fe3394447ab884554410c1b5c1c77ab8debab6a6c78e7e5a522c0bf"
 
 @app.route("/classify", methods=["POST"])
 def classify():
-    print("Raw data:", request.data)
     try:
-        data = request.get_json(force=True)
-        print("JSON data:", data)
-    except Exception as e:
-        return jsonify({"error": "Invalid JSON: " + str(e)}), 400
+        # نتوقع ملف صوت تحت اسم 'file' في الفورم
+        if 'file' not in request.files:
+            return jsonify({"error": "Missing file part"}), 400
 
-    audio_url = data.get("audio_url")
-    if not audio_url:
-        return jsonify({"error": "Missing 'audio_url'"}), 400
+        file = request.files['file']
 
-    try:
-        audio_response = requests.get(audio_url)
-        print("Audio response status:", audio_response.status_code)
-        audio_data = audio_response.content
-        print("Audio data length:", len(audio_data))
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
 
+        audio_data = file.read()
+
+        # نرسل الملف مباشرة لـ Edge Impulse
         response = requests.post(
             EDGE_API,
             headers={
@@ -35,23 +31,20 @@ def classify():
             },
             data=audio_data
         )
-        print("Edge Impulse response status:", response.status_code)
-        print("Edge Impulse response text:", response.text[:200])  # اطبع أول 200 حرف من الرد
 
-        # حاول ترجع JSON فقط لو الرد صالح
-        try:
-            return jsonify(response.json())
-        except Exception as e:
-            print("Failed to parse JSON from Edge Impulse response:", e)
+        if response.status_code != 200:
             return jsonify({
-                "error": "Invalid JSON response from Edge Impulse",
+                "error": "Edge Impulse API error",
+                "status_code": response.status_code,
                 "response_text": response.text
             }), 500
 
+        return jsonify(response.json())
+
     except Exception as e:
-        print("Error occurred:", e)
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
