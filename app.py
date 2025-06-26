@@ -35,7 +35,19 @@ def classify():
             },
             data=audio_data
         )
-        return jsonify(response.json())
+        print("Edge Impulse response status:", response.status_code)
+        print("Edge Impulse response text:", response.text[:200])  # اطبع أول 200 حرف من الرد
+
+        # حاول ترجع JSON فقط لو الرد صالح
+        try:
+            return jsonify(response.json())
+        except Exception as e:
+            print("Failed to parse JSON from Edge Impulse response:", e)
+            return jsonify({
+                "error": "Invalid JSON response from Edge Impulse",
+                "response_text": response.text
+            }), 500
+
     except Exception as e:
         print("Error occurred:", e)
         traceback.print_exc()
