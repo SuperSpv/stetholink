@@ -9,7 +9,7 @@ API_KEY = "ei_95b7e4358fe3394447ab884554410c1b5c1c77ab8debab6a6c78e7e5a522c0bf"
 
 @app.route("/classify", methods=["POST"])
 def classify():
-    print("Raw data:", request.data)  # اطبع جسم الطلب الخام
+    print("Raw data:", request.data)
     try:
         data = request.get_json(force=True)
         print("JSON data:", data)
@@ -32,6 +32,7 @@ def classify():
         )
         return jsonify(response.json())
     except Exception as e:
+        print("Error occurred:", e)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
