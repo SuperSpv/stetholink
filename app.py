@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import requests
 import os
+import traceback
 
 app = Flask(__name__)
 
@@ -33,6 +34,7 @@ def classify():
         return jsonify(response.json())
     except Exception as e:
         print("Error occurred:", e)
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
