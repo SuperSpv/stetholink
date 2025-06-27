@@ -1,51 +1,36 @@
 from flask import Flask, request, jsonify
-import requests
-import os
-import traceback
+import numpy as np
+import tensorflow as tf
+import librosa
+import io
 
 app = Flask(__name__)
 
-EDGE_API = "https://ingestion.edgeimpulse.com/api/classify"
-API_KEY = "ei_95b7e4358fe3394447ab884554410c1b5c1c77ab8debab6a6c78e7e5a522c0bf"
+# Load the TFLite model
+interpreter = tf.lite.Interpreter(model_path="tflite_learn_3.tflite")
+interpreter.allocate_tensors()
 
-@app.route("/classify", methods=["POST"])
-def classify():
-    try:
-        # نتوقع ملف صوت تحت اسم 'file' في الفورم
-        if 'file' not in request.files:
-            return jsonify({"error": "Missing file part"}), 400
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
-        file = request.files['file']
+def preprocess_audio(file_stream):
+    y, sr = librosa.load(file_stream, sr=16000)
+    y = librosa.util.fix_length(y, size=16000)  # Adjust size to match model input
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=40)
+    mfcc = mfcc.T[:100]  # Example shape: (100, 40)
+    mfcc = np.expand_dims(mfcc, axis=0).astype(np.float32)  # (1, 100, 40)
+    return mfcc
 
-        if file.filename == '':
-            return jsonify({"error": "No selected file"}), 400
+@app.route("/predict", methods=["POST"])
+def predict():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
 
-        audio_data = file.read()
+    file = request.files['file']
+    audio = preprocess_audio(file)
 
-        # نرسل الملف مباشرة لـ Edge Impulse
-        response = requests.post(
-            EDGE_API,
-            headers={
-                "x-api-key": API_KEY,
-                "Content-Type": "audio/wav"
-            },
-            data=audio_data
-        )
+    interpreter.set_tensor(input_details[0]['index'], audio)
+    interpreter.invoke()
+    output_data = interpreter.get_tensor(output_details[0]['index'])
 
-        if response.status_code != 200:
-            return jsonify({
-                "error": "Edge Impulse API error",
-                "status_code": response.status_code,
-                "response_text": response.text
-            }), 500
-
-        return jsonify(response.json())
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    return jsonify({"prediction": output_data.tolist()})
