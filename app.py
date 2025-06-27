@@ -3,6 +3,7 @@ import numpy as np
 import tensorflow as tf
 import librosa
 import io
+import requests
 
 app = Flask(__name__)
 
@@ -23,14 +24,38 @@ def preprocess_audio(file_stream):
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+    data = request.get_json()
+    if not data or 'url' not in data:
+        return jsonify({"error": "No URL provided"}), 400
 
-    file = request.files['file']
-    audio = preprocess_audio(file)
+    audio_url = data['url']
+
+    # Download audio file from URL
+    try:
+        response = requests.get(audio_url)
+        response.raise_for_status()
+    except Exception as e:
+        return jsonify({"error": f"Failed to download audio: {str(e)}"}), 400
+
+    # Load audio from bytes using librosa (wrap bytes in BytesIO)
+    audio_bytes = io.BytesIO(response.content)
+    audio = preprocess_audio(audio_bytes)
 
     interpreter.set_tensor(input_details[0]['index'], audio)
     interpreter.invoke()
     output_data = interpreter.get_tensor(output_details[0]['index'])
 
-    return jsonify({"prediction": output_data.tolist()})
+    # Optional: map output_data to label (e.g. healthy/unhealthy/uncertain)
+    prediction_label = decode_output(output_data)
+
+    return jsonify({"prediction": prediction_label})
+
+def decode_output(output_data):
+    # Implement this according to your model's output format
+    # For example, if output_data is probabilities for 3 classes:
+    classes = ["healthy", "unhealthy", "uncertain"]
+    pred_index = np.argmax(output_data)
+    return classes[pred_index]
+
+if __name__ == "__main__":
+    app.run(debug=True)
