@@ -11,13 +11,22 @@ logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-# Load your TFLite model once
+# Load your TFLite model
 interpreter = tf.lite.Interpreter(model_path="tflite_learn_3.tflite")
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-labels = ['healthy', 'unhealthy', 'uncertain']  # Update if your model uses different labels
+# Labels from your Edge Impulse project. Add 'uncertain' if you have it.
+labels = ['healthy', 'unhealthy'] 
+
+# --- Parameters from Edge Impulse ---
+SAMPLE_RATE = 16000  # We'll use 16k Hz as it's common, though your project shows 4k. Adjust if needed.
+WINDOW_SIZE_S = 1.5  # 1500 ms
+STRIDE_S = 0.5       # 500 ms
+
+WINDOW_SAMPLES = int(SAMPLE_RATE * WINDOW_SIZE_S)
+STRIDE_SAMPLES = int(SAMPLE_RATE * STRIDE_S)
 
 @app.route("/", methods=["GET"])
 def home():
@@ -32,73 +41,70 @@ def diagnose():
 
         audio_url = json_data.get("audio_url")
         if not audio_url:
-            return jsonify({"error": "Missing or invalid 'audio_url' in JSON body"}), 400
+            return jsonify({"error": "Missing 'audio_url'"}), 400
 
         # Download audio
         response = requests.get(audio_url)
         if response.status_code != 200:
             return jsonify({"error": "Audio download failed"}), 400
 
-        # Save audio temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             tmp_file.write(response.content)
             tmp_path = tmp_file.name
 
         # Load audio
-        y, sr = librosa.load(tmp_path, sr=16000, mono=True)
+        y, sr = librosa.load(tmp_path, sr=SAMPLE_RATE, mono=True)
         os.remove(tmp_path)
 
-        # Limit audio to 15 seconds
-        max_samples = 15 * 16000
-        if len(y) > max_samples:
-            y = y[:max_samples]
+        if len(y) < WINDOW_SAMPLES:
+            return jsonify({"error": "Audio clip is too short. Must be at least 1.5 seconds."}), 400
 
-        duration = len(y) / 16000
-        logging.info(f"Detected audio length: {duration:.2f} seconds")
-
-        num_segments = len(y) // 16000
+        # Dictionary to count predictions
         counts = {label: 0 for label in labels}
+        
+        # --- Sliding Window Logic ---
+        for i in range(0, len(y) - WINDOW_SAMPLES + 1, STRIDE_SAMPLES):
+            segment = y[i : i + WINDOW_SAMPLES]
 
-        for i in range(num_segments):
-            segment = y[i*16000:(i+1)*16000]
-
-            # Skip incomplete segments
-            if len(segment) < 16000:
-                logging.info(f"Skipping incomplete segment {i} with length {len(segment)}")
-                continue
-
-            # Extract MFCCs and trim to exactly (13, 75)
+            # Extract MFCCs for the 1.5-second window
             mfcc = librosa.feature.mfcc(
                 y=segment,
-                sr=16000,
+                sr=SAMPLE_RATE,
                 n_mfcc=13,
                 n_fft=400,
                 hop_length=213
             )
-            mfcc = mfcc[:, :75]  # Force to (13, 75)
+            # This shape adjustment might be needed depending on the exact output of Edge Impulse
+            mfcc = mfcc[:, :75] 
 
             features = mfcc.flatten().astype(np.float32).reshape(1, -1)
 
+            # Ensure the feature shape matches the model's expected input
             expected_shape = input_details[0]['shape'][1]
             if features.shape[1] != expected_shape:
-                return jsonify({
-                    "error": f"MFCC shape mismatch: got {features.shape[1]}, expected {expected_shape}"
-                }), 400
+                 return jsonify({"error": f"MFCC shape mismatch: got {features.shape[1]}, expected {expected_shape}"}), 500
 
-            # Inference
+            # Run inference on the window
             interpreter.set_tensor(input_details[0]['index'], features)
             interpreter.invoke()
             output = interpreter.get_tensor(output_details[0]['index'])
+            
             class_index = int(np.argmax(output[0]))
-            counts[labels[class_index]] += 1
+            
+            # Ensure class_index is within the bounds of your labels list
+            if class_index < len(labels):
+                prediction = labels[class_index]
+                counts[prediction] += 1
+            else:
+                logging.warning(f"Model predicted an out-of-bounds index: {class_index}")
 
+        # Return the total counts from all windows
         return jsonify(counts)
 
     except Exception as e:
         logging.exception("Error during diagnosis")
         return jsonify({"error": str(e)}), 500
 
-# Don't run app.run on Render (use gunicorn)
 if __name__ == "__main__":
     import sys
     if "gunicorn" not in sys.modules:
