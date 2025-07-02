@@ -53,11 +53,19 @@ def diagnose():
         if len(y) > max_samples:
             y = y[:max_samples]
 
+        duration = len(y) / 16000
+        logging.info(f"Detected audio length: {duration:.2f} seconds")
+
         num_segments = len(y) // 16000
         counts = {label: 0 for label in labels}
 
         for i in range(num_segments):
             segment = y[i*16000:(i+1)*16000]
+
+            # Skip incomplete segments
+            if len(segment) < 16000:
+                logging.info(f"Skipping incomplete segment {i} with length {len(segment)}")
+                continue
 
             # Extract MFCCs and trim to exactly (13, 75)
             mfcc = librosa.feature.mfcc(
