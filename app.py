@@ -22,10 +22,19 @@ labels = ['healthy', 'unhealthy', 'uncertain']  # Adjust if needed
 @app.route("/diagnose", methods=["POST"])
 def diagnose():
     try:
-        logging.info("Received diagnose request")
-        audio_url = request.json.get("audio_url")
+        logging.info(f"Headers: {dict(request.headers)}")
+        logging.info(f"Raw data: {request.data}")
+
+        # Use get_json with force=True to parse even if Content-Type is missing
+        json_data = request.get_json(force=True, silent=True)
+        logging.info(f"Parsed JSON: {json_data}")
+
+        if not json_data:
+            return jsonify({"error": "Request body is not valid JSON"}), 400
+
+        audio_url = json_data.get("audio_url")
         if not audio_url:
-            return jsonify({"error": "Missing audio_url"}), 400
+            return jsonify({"error": "Missing or invalid 'audio_url' in JSON body"}), 400
 
         # Download audio file from URL
         response = requests.get(audio_url)
