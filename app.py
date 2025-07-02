@@ -11,23 +11,22 @@ logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
-# Load your TFLite model once at startup
+# Load your TFLite model once
 interpreter = tf.lite.Interpreter(model_path="tflite_learn_3.tflite")
 interpreter.allocate_tensors()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-labels = ['healthy', 'unhealthy', 'uncertain']  # Adjust labels if needed
+labels = ['healthy', 'unhealthy', 'uncertain']  # Update if your model uses different labels
+
+@app.route("/", methods=["GET"])
+def home():
+    return "✅ StethoLink API is live"
 
 @app.route("/diagnose", methods=["POST"])
 def diagnose():
     try:
-        logging.info(f"Headers: {dict(request.headers)}")
-        logging.info(f"Raw data: {request.data}")
-
         json_data = request.get_json(force=True, silent=True)
-        logging.info(f"Parsed JSON: {json_data}")
-
         if not json_data:
             return jsonify({"error": "Request body is not valid JSON"}), 400
 
@@ -35,36 +34,32 @@ def diagnose():
         if not audio_url:
             return jsonify({"error": "Missing or invalid 'audio_url' in JSON body"}), 400
 
-        # Download audio from URL
+        # Download audio
         response = requests.get(audio_url)
         if response.status_code != 200:
             return jsonify({"error": "Audio download failed"}), 400
 
-        # Save audio to temporary wav file
+        # Save audio temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
             tmp_file.write(response.content)
             tmp_path = tmp_file.name
 
-        # Load and resample audio to 16kHz mono
+        # Load audio
         y, sr = librosa.load(tmp_path, sr=16000, mono=True)
-        os.remove(tmp_path)  # clean up temp file
+        os.remove(tmp_path)
 
-        # Limit audio duration (optional, e.g., max 15 seconds)
-        max_duration_sec = 15
-        max_samples = max_duration_sec * 16000
+        # Limit audio to 15 seconds
+        max_samples = 15 * 16000
         if len(y) > max_samples:
             y = y[:max_samples]
 
-        logging.info(f"Audio length (seconds): {len(y)/16000:.2f}")
-
-        # Split audio into 1-second segments
         num_segments = len(y) // 16000
         counts = {label: 0 for label in labels}
 
         for i in range(num_segments):
-            segment = y[i*16000 : (i+1)*16000]
+            segment = y[i*16000:(i+1)*16000]
 
-            # Extract MFCC features (13 coefficients, 75 frames = 975 features)
+            # Extract MFCCs and trim to exactly (13, 75)
             mfcc = librosa.feature.mfcc(
                 y=segment,
                 sr=16000,
@@ -72,6 +67,7 @@ def diagnose():
                 n_fft=400,
                 hop_length=213
             )
+            mfcc = mfcc[:, :75]  # Force to (13, 75)
 
             features = mfcc.flatten().astype(np.float32).reshape(1, -1)
 
@@ -81,6 +77,7 @@ def diagnose():
                     "error": f"MFCC shape mismatch: got {features.shape[1]}, expected {expected_shape}"
                 }), 400
 
+            # Inference
             interpreter.set_tensor(input_details[0]['index'], features)
             interpreter.invoke()
             output = interpreter.get_tensor(output_details[0]['index'])
@@ -90,11 +87,12 @@ def diagnose():
         return jsonify(counts)
 
     except Exception as e:
-        logging.error(f"Error: {str(e)}")
+        logging.exception("Error during diagnosis")
         return jsonify({"error": str(e)}), 500
 
-
+# Don't run app.run on Render (use gunicorn)
 if __name__ == "__main__":
-    # Render sets the PORT environment variable dynamically
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    import sys
+    if "gunicorn" not in sys.modules:
+        port = int(os.environ.get("PORT", 5000))
+        app.run(host="0.0.0.0", port=port)
