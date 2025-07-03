@@ -7,55 +7,61 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# Load your TFLite model
 interpreter = tf.lite.Interpreter(model_path="tflite_learn_3.tflite")
 interpreter.allocate_tensors()
-
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
-TARGET_SAMPLE_RATE = 16000
-TARGET_DURATION = 1.5  # seconds
-TARGET_LENGTH = int(TARGET_SAMPLE_RATE * TARGET_DURATION)  # 24000 samples
+# Constants
+SR = 16000
+DURATION = 1.5           # seconds
+SAMPLES = int(SR * DURATION)  # 24000
+N_MFCC = 13
+N_FRAMES = 75
+FEATURE_LEN = N_MFCC * N_FRAMES  # 975
 
 def download_audio(url):
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(f"Failed to download audio: {response.status_code}")
-    filename = "temp.wav"
-    with open(filename, "wb") as f:
-        f.write(response.content)
-    return filename
+    r = requests.get(url)
+    if r.status_code != 200:
+        raise Exception(f"Failed to download audio: {r.status_code}")
+    path = "temp_audio.wav"
+    with open(path, "wb") as f:
+        f.write(r.content)
+    return path
 
-def preprocess_audio(file_path):
-    audio, sr = librosa.load(file_path, sr=TARGET_SAMPLE_RATE, mono=True)
-    if len(audio) < TARGET_LENGTH:
-        audio = librosa.util.fix_length(audio, size=TARGET_LENGTH)
+def extract_features(path):
+    y, sr = librosa.load(path, sr=SR, mono=True)
+    if len(y) < SAMPLES:
+        y = librosa.util.fix_length(y, size=SAMPLES)
     else:
-        audio = audio[:TARGET_LENGTH]
-    return np.array(audio, dtype=np.float32).reshape(1, TARGET_LENGTH)
+        y = y[:SAMPLES]
+    mfcc = librosa.feature.mfcc(y=y, sr=SR, n_mfcc=N_MFCC, n_fft=400, hop_length=int(SAMPLES / (N_FRAMES - 1)))
+    mfcc = mfcc[:, :N_FRAMES]
+    feat = mfcc.flatten()
+    if feat.size < FEATURE_LEN:
+        feat = np.pad(feat, (0, FEATURE_LEN - feat.size))
+    else:
+        feat = feat[:FEATURE_LEN]
+    return np.expand_dims(feat.astype(np.float32), axis=0)
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    data = request.json
+    data = request.get_json(force=True)
     if not data or "url" not in data:
-        return jsonify({"error": "Missing 'url' in request"}), 400
-
+        return jsonify(error="Missing 'url'"), 400
     try:
-        file_path = download_audio(data["url"])
-        input_data = preprocess_audio(file_path)
-
-        interpreter.set_tensor(input_details[0]["index"], input_data)
+        filepath = download_audio(data["url"])
+        features = extract_features(filepath)
+        os.remove(filepath)
+        interpreter.set_tensor(input_details[0]['index'], features)
         interpreter.invoke()
-        output = interpreter.get_tensor(output_details[0]["index"])
-
-        labels = ["healthy", "uncertain", "unhealthy"]
-        result = {labels[i]: round(output[0][i], 4) for i in range(len(labels))}
-
-        os.remove(file_path)
+        output = interpreter.get_tensor(output_details[0]['index'])[0]
+        labels = ["healthy", "unhealthy", "uncertain"]
+        result = {labels[i]: round(float(output[i]), 4) for i in range(len(output))}
         return jsonify(result)
-
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(error=str(e)), 500
 
 if __name__ == "__main__":
-    app.run(debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
